@@ -1,6 +1,8 @@
-faiss-cpu
 streamlit
+faiss-cpu
 mistralai
 beautifulsoup4
 requests
 sentence-transformers
+torch
+transformers
