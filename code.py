@@ -31,7 +31,6 @@ def get_text_embedding(list_txt_chunks):
 
 # Initialize FAISS index
 def create_faiss_index(embeddings):
-    def create_faiss_index(embeddings):
     # Convert the embeddings to a 2D NumPy array
     embedding_vectors = np.array([embedding.embedding for embedding in embeddings])
     
