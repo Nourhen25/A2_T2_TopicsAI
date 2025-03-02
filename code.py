@@ -8,7 +8,7 @@ from mistralai.client import MistralClient
 from mistralai.models.chat_completion import ChatMessage
 
 # ---- SET UP API KEY ----
-os.environ["MISTRAL_API_KEY"] = "your-mistral-api-key"  # Replace with your actual key
+os.environ["MISTRAL_API_KEY"] = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"  # Replace with your actual key
 API_KEY = os.getenv("MISTRAL_API_KEY")
 
 # ---- INITIALIZE AI MODELS ----
