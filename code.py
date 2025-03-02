@@ -31,11 +31,22 @@ def get_text_embedding(list_txt_chunks):
 
 # Initialize FAISS index
 def create_faiss_index(embeddings):
-    d = len(embeddings[0].embedding)
+    def create_faiss_index(embeddings):
+    # Convert the embeddings to a 2D NumPy array
+    embedding_vectors = np.array([embedding.embedding for embedding in embeddings])
+    
+    # Ensure the shape is (num_embeddings, embedding_size)
+    d = embedding_vectors.shape[1]  # embedding size (dimensionality)
+    
+    # Create the FAISS index and add the embeddings
     index = faiss.IndexFlatL2(d)
     faiss_index = faiss.IndexIDMap(index)
-    faiss_index.add_with_ids(embeddings, np.array(range(len(embeddings))))
+    
+    # Add the embeddings with an id for each (FAISS requires ids)
+    faiss_index.add_with_ids(embedding_vectors, np.array(range(len(embedding_vectors))))
+    
     return faiss_index
+
 
 # Search for the most relevant chunks based on query embedding
 def search_relevant_chunks(faiss_index, query_embedding, k=2):
