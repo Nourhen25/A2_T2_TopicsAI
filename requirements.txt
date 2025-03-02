@@ -1,0 +1,6 @@
+faiss-cpu
+streamlit
+mistralai
+beautifulsoup4
+requests
+sentence-transformers
