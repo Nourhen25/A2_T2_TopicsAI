@@ -69,6 +69,13 @@ train_labels = [
     "joint-appointment-policy"
 ]
 
+# Check lengths of training data
+print(f"Length of train_texts: {len(train_texts)}")
+print(f"Length of train_labels: {len(train_labels)}")
+
+# Ensure they match
+assert len(train_texts) == len(train_labels), "Mismatch between training texts and labels lengths."
+
 # Vectorize training data
 X_train = vectorizer.fit_transform(train_texts)
 y_train = le.fit_transform(train_labels)
