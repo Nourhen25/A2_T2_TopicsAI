@@ -5,94 +5,28 @@ from bs4 import BeautifulSoup
 import numpy as np
 from mistralai import Mistral
 import faiss
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.naive_bayes import MultinomialNB
 
 # Set up your Mistral API key
 api_key = "ajZS5VlpB8GFUXsx4Ugw2C7CdkR4wbmK"
-
 os.environ["MISTRAL_API_KEY"] = api_key
 
-# Fetching and parsing policy data
-def fetch_policy_data(url):
-    response = requests.get(url)
-    html_doc = response.text
-    soup = BeautifulSoup(html_doc, "html.parser")
-    tag = soup.find("div")
-    text = tag.text.strip()
-    return text
-
-# Chunking function to break text into smaller parts
-def chunk_text(text, chunk_size=512):
-    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-
-# Get embeddings for text chunks
-def get_text_embedding(list_txt_chunks):
-    client = Mistral(api_key=api_key)
-    embeddings_batch_response = client.embeddings.create(model="mistral-embed", inputs=list_txt_chunks)
-    return embeddings_batch_response.data
-
-# Initialize FAISS index
-def create_faiss_index(embeddings):
-    embedding_vectors = np.array([embedding.embedding for embedding in embeddings])
-    d = embedding_vectors.shape[1]  # embedding size (dimensionality)
-    index = faiss.IndexFlatL2(d)
-    faiss_index = faiss.IndexIDMap(index)
-    faiss_index.add_with_ids(embedding_vectors, np.array(range(len(embedding_vectors))))
-    return faiss_index
-
-# Search for the most relevant chunks based on query embedding
-def search_relevant_chunks(faiss_index, query_embedding, k=2):
-    D, I = faiss_index.search(query_embedding, k)
-    return I
-
-# Mistral model to generate answers based on context
-def mistral_answer(query, context):
-    prompt = f"""
-    Context information is below.
-    ---------------------
-    {context}
-    ---------------------
-    Given the context information and not prior knowledge, answer the query.
-    Query: {query}
-    Answer:
-    """
-    client = Mistral(api_key=api_key)
-    messages = [{"role": "user", "content": prompt}]
-    chat_response = client.chat.complete(model="mistral-large-latest", messages=messages)
-    return chat_response.choices[0].message.content
-
-# Keyword-based classifier for policy classification (intent detection)
-def classify_intent(query):
-    # Define keywords for each policy (simplified classification)
-    policies_keywords = {
-        "Academic Annual Leave Policy": ["annual leave", "leave", "vacation"],
-        "Academic Appraisal Policy": ["appraisal", "performance review", "evaluation"],
-        "Academic Appraisal Procedure": ["procedure", "appraisal procedure"],
-        "Academic Credentials Policy": ["credentials", "qualifications", "degree"],
-        "Academic Freedom Policy": ["academic freedom", "freedom of expression"],
-        "Academic Members' Retention Policy": ["retention", "staff retention", "members retention"],
-        "Academic Qualifications Policy": ["qualifications", "academic qualifications"],
-        "Credit Hour Policy": ["credit hour", "credit", "hours"],
-        "Intellectual Property Policy": ["intellectual property", "IP", "patents"],
-        "Joint Appointment Policy": ["joint appointment", "dual role", "joint faculty"]
-    }
-    
-    # Convert the query to lowercase for case-insensitive matching
-    query = query.lower()
-    
-    # Match the query to the policy with the highest number of keyword matches
-    best_match = None
-    max_matches = 0
-    
-    for policy, keywords in policies_keywords.items():
-        matches = sum(keyword in query for keyword in keywords)
-        if matches > max_matches:
-            best_match = policy
-            max_matches = matches
-    
-    return best_match
+# Define a dictionary for policies and their related keywords
+policies_keywords = {
+    "Academic Annual Leave Policy": ["annual leave", "leave", "vacation", "academic leave"],
+    "Academic Appraisal Policy": ["appraisal", "evaluation", "assessment", "performance review"],
+    "Academic Appraisal Procedure": ["appraisal procedure", "evaluation procedure", "assessment procedure"],
+    "Academic Credentials Policy": ["academic credentials", "qualifications", "degree", "certifications"],
+    "Academic Freedom Policy": ["freedom of expression", "academic freedom", "speech", "academic integrity"],
+    "Academic Members’ Retention Policy": ["retention", "faculty retention", "academic retention"],
+    "Academic Qualifications Policy": ["academic qualifications", "degree requirements", "degree qualifications"],
+    "Credit Hour Policy": ["credit hour", "credits", "semester hours"],
+    "Intellectual Property Policy": ["intellectual property", "IP", "patents", "copyright", "trademarks"],
+    "Joint Appointment Policy": ["joint appointment", "dual role", "cross appointment"]
+}
 
 # Streamlit Interface
-# Updated to fix the error when accessing the index of selected_policy
 def streamlit_app():
     st.title('UDST Policies Q&A')
 
@@ -149,8 +83,101 @@ def streamlit_app():
         else:
             st.write("Sorry, I couldn't classify the query to a specific policy.")
 
+# Define a function to classify the intent of the query
+def classify_intent(query):
+    vectorizer = CountVectorizer(stop_words='english')
+    classifier = MultinomialNB()
+
+    # Prepare the training data
+    train_texts = [
+        "annual leave policy", "academic leave", "vacation time", "performance review", "evaluation of faculty",
+        "qualification verification", "academic integrity", "freedom of speech", "faculty retention", 
+        "degree requirements", "credit hour rules", "intellectual property policy", "joint appointment"
+    ]
+    
+    # Map the labels to each policy
+    train_labels = [
+        "Academic Annual Leave Policy", "Academic Annual Leave Policy", "Academic Annual Leave Policy", 
+        "Academic Appraisal Policy", "Academic Appraisal Policy", "Academic Credentials Policy", 
+        "Academic Freedom Policy", "Academic Freedom Policy", "Academic Members’ Retention Policy", 
+        "Academic Qualifications Policy", "Credit Hour Policy", "Intellectual Property Policy", 
+        "Joint Appointment Policy"
+    ]
+
+    # Ensure the training texts and labels match in length
+    assert len(train_texts) == len(train_labels), "Mismatch between training texts and labels lengths."
+    
+    # Vectorize the training data
+    X_train = vectorizer.fit_transform(train_texts)
+    y_train = train_labels
+
+    # Train the classifier
+    classifier.fit(X_train, y_train)
+
+    # Vectorize the query and classify
+    query_vec = vectorizer.transform([query])
+    predicted_policy = classifier.predict(query_vec)[0]
+
+    return predicted_policy
+
+# Fetching and parsing policy data
+def fetch_policy_data(url):
+    response = requests.get(url)
+    html_doc = response.text
+    soup = BeautifulSoup(html_doc, "html.parser")
+    tag = soup.find("div")
+    text = tag.text.strip()
+    return text
+
+# Chunking function to break text into smaller parts
+def chunk_text(text, chunk_size=512):
+    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+
+# Get embeddings for text chunks
+def get_text_embedding(list_txt_chunks):
+    client = Mistral(api_key=api_key)
+    embeddings_batch_response = client.embeddings.create(model="mistral-embed", inputs=list_txt_chunks)
+    return embeddings_batch_response.data
+
+# Initialize FAISS index
+def create_faiss_index(embeddings):
+    # Convert the embeddings to a 2D NumPy array
+    embedding_vectors = np.array([embedding.embedding for embedding in embeddings])
+    
+    # Ensure the shape is (num_embeddings, embedding_size)
+    d = embedding_vectors.shape[1]  # embedding size (dimensionality)
+    
+    # Create the FAISS index and add the embeddings
+    index = faiss.IndexFlatL2(d)
+    faiss_index = faiss.IndexIDMap(index)
+    
+    # Add the embeddings with an id for each (FAISS requires ids)
+    faiss_index.add_with_ids(embedding_vectors, np.array(range(len(embedding_vectors))))
+    
+    return faiss_index
+
+
+# Search for the most relevant chunks based on query embedding
+def search_relevant_chunks(faiss_index, query_embedding, k=2):
+    D, I = faiss_index.search(query_embedding, k)
+    return I
+
+# Mistral model to generate answers based on context
+def mistral_answer(query, context):
+    prompt = f"""
+    Context information is below.
+    ---------------------
+    {context}
+    ---------------------
+    Given the context information and not prior knowledge, answer the query.
+    Query: {query}
+    Answer:
+    """
+    client = Mistral(api_key=api_key)
+    messages = [{"role": "user", "content": prompt}]
+    chat_response = client.chat.complete(model="mistral-large-latest", messages=messages)
+    return chat_response.choices[0].message.content
+
 # Run Streamlit app
 if __name__ == '__main__':
     streamlit_app()
-
-          
