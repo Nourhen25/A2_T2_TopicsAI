@@ -5,91 +5,11 @@ from bs4 import BeautifulSoup
 import numpy as np
 from mistralai import Mistral
 import faiss
-from sklearn.preprocessing import LabelEncoder
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 # Set up your Mistral API key
-api_key = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"
+api_key = "ajZS5VlpB8GFUXsx4Ugw2C7CdkR4wbmK"
+
 os.environ["MISTRAL_API_KEY"] = api_key
-
-# Sample intent classification data (can be expanded for better accuracy)
-policies = [
-    "academic-annual-leave-policy",
-    "academic-appraisal-policy",
-    "academic-appraisal-procedure",
-    "academic-credentials-policy",
-    "academic-freedom-policy",
-    "academic-members-retention-policy",
-    "academic-qualifications-policy",
-    "credit-hour-policy",
-    "intellectual-property-policy",
-    "joint-appointment-policy"
-]
-
-policy_urls = {
-    "academic-annual-leave-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
-    "academic-appraisal-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
-    "academic-appraisal-procedure": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-procedure",
-    "academic-credentials-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
-    "academic-freedom-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-freedom-policy",
-    "academic-members-retention-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-members%E2%80%99-retention-policy",
-    "academic-qualifications-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-qualifications-policy",
-    "credit-hour-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
-    "intellectual-property-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
-    "joint-appointment-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/joint-appointment-policy"
-}
-
-# Intent classifier (simple text classifier) trained once
-vectorizer = TfidfVectorizer(stop_words='english')
-le = LabelEncoder()
-
-# Sample training data (can be expanded)
-train_texts = [
-    "What is the leave policy?",
-    "How does the academic appraisal process work?",
-    "What is the procedure for academic credentials?",
-    "What does academic freedom entail?",
-    "How do they retain academic staff?",
-    "What are the qualifications needed for academic positions?",
-    "How do credit hours work?",
-    "What is the intellectual property policy?",
-    "Explain the joint appointment policy."
-]
-train_labels = [
-    "academic-annual-leave-policy",
-    "academic-appraisal-policy",
-    "academic-appraisal-procedure",
-    "academic-credentials-policy",
-    "academic-freedom-policy",
-    "academic-members-retention-policy",
-    "academic-qualifications-policy",
-    "credit-hour-policy",
-    "intellectual-property-policy",
-    "joint-appointment-policy"
-]
-
-# Check lengths of training data
-print(f"Length of train_texts: {len(train_texts)}")
-print(f"Length of train_labels: {len(train_labels)}")
-
-# Ensure they match
-assert len(train_texts) == len(train_labels), "Mismatch between training texts and labels lengths."
-
-# Vectorize training data
-X_train = vectorizer.fit_transform(train_texts)
-y_train = le.fit_transform(train_labels)
-
-# Train the classifier once
-classifier = MultinomialNB()
-classifier.fit(X_train, y_train)
-
-# Classify intent (which policy is related to the query)
-def classify_intent(query):
-    X_query = vectorizer.transform([query])
-    predicted_label = classifier.predict(X_query)
-    predicted_policy = le.inverse_transform(predicted_label)[0]
-    return predicted_policy
 
 # Fetching and parsing policy data
 def fetch_policy_data(url):
@@ -140,37 +60,87 @@ def mistral_answer(query, context):
     chat_response = client.chat.complete(model="mistral-large-latest", messages=messages)
     return chat_response.choices[0].message.content
 
+# Keyword-based classifier for policy classification (intent detection)
+def classify_intent(query):
+    # Define keywords for each policy (simplified classification)
+    policies_keywords = {
+        "Academic Annual Leave Policy": ["annual leave", "leave", "vacation"],
+        "Academic Appraisal Policy": ["appraisal", "performance review", "evaluation"],
+        "Academic Appraisal Procedure": ["procedure", "appraisal procedure"],
+        "Academic Credentials Policy": ["credentials", "qualifications", "degree"],
+        "Academic Freedom Policy": ["academic freedom", "freedom of expression"],
+        "Academic Members' Retention Policy": ["retention", "staff retention", "members retention"],
+        "Academic Qualifications Policy": ["qualifications", "academic qualifications"],
+        "Credit Hour Policy": ["credit hour", "credit", "hours"],
+        "Intellectual Property Policy": ["intellectual property", "IP", "patents"],
+        "Joint Appointment Policy": ["joint appointment", "dual role", "joint faculty"]
+    }
+    
+    # Convert the query to lowercase for case-insensitive matching
+    query = query.lower()
+    
+    # Match the query to the policy with the highest number of keyword matches
+    best_match = None
+    max_matches = 0
+    
+    for policy, keywords in policies_keywords.items():
+        matches = sum(keyword in query for keyword in keywords)
+        if matches > max_matches:
+            best_match = policy
+            max_matches = matches
+    
+    return best_match
+
 # Streamlit Interface
 def streamlit_app():
     st.title('UDST Policies Q&A')
+
+    # Select a policy from a list of 10 policies (example URLs)
+    policies = [
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-procedure",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-freedom-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-members%E2%80%99-retention-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-qualifications-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
+        "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/joint-appointment-policy"
+    ]
 
     # Input box for query
     query = st.text_input("Enter your Query:")
 
     if query:
-        # Classify the intent of the query (i.e., which policy is it related to?)
+        # Classify the intent (which policy is related to the query)
         selected_policy = classify_intent(query)
-        selected_policy_url = policy_urls[selected_policy]
         
-        # Fetch policy data and chunk it
-        policy_text = fetch_policy_data(selected_policy_url)
-        chunks = chunk_text(policy_text)
-        
-        # Generate embeddings for the chunks and create a FAISS index
-        embeddings = get_text_embedding(chunks)
-        faiss_index = create_faiss_index(embeddings)
-        
-        # Embed the user query and search for relevant chunks
-        query_embedding = np.array([get_text_embedding([query])[0].embedding])
-        I = search_relevant_chunks(faiss_index, query_embedding, k=2)
-        retrieved_chunks = [chunks[i] for i in I.tolist()[0]]
-        context = " ".join(retrieved_chunks)
-        
-        # Generate answer from the model
-        answer = mistral_answer(query, context)
-        
-        # Display the answer
-        st.text_area("Answer:", answer, height=200)
+        if selected_policy:
+            st.write(f"Query is related to: {selected_policy}")
+            
+            # Fetch policy data and chunk it
+            selected_policy_url = policies[policies_keywords.keys().index(selected_policy)]
+            policy_text = fetch_policy_data(selected_policy_url)
+            chunks = chunk_text(policy_text)
+
+            # Generate embeddings for the chunks and create a FAISS index
+            embeddings = get_text_embedding(chunks)
+            faiss_index = create_faiss_index(embeddings)
+
+            # Embed the user query and search for relevant chunks
+            query_embedding = np.array([get_text_embedding([query])[0].embedding])
+            I = search_relevant_chunks(faiss_index, query_embedding, k=2)
+            retrieved_chunks = [chunks[i] for i in I.tolist()[0]]
+            context = " ".join(retrieved_chunks)
+
+            # Generate answer from the model
+            answer = mistral_answer(query, context)
+
+            # Display the answer
+            st.text_area("Answer:", answer, height=200)
+        else:
+            st.write("Sorry, I couldn't classify the query to a specific policy.")
 
 # Run Streamlit app
 if __name__ == '__main__':
