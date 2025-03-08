@@ -92,10 +92,11 @@ def classify_intent(query):
     return best_match
 
 # Streamlit Interface
+# Updated to fix the error when accessing the index of selected_policy
 def streamlit_app():
     st.title('UDST Policies Q&A')
 
-    # Select a policy from a list of 10 policies (example URLs)
+    # Define policy URLs
     policies = [
         "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
         "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
@@ -119,8 +120,14 @@ def streamlit_app():
         if selected_policy:
             st.write(f"Query is related to: {selected_policy}")
             
+            # Convert the keys of the dictionary to a list to use index()
+            policy_keys = list(policies_keywords.keys())
+            
+            # Find the index of the selected policy
+            selected_policy_index = policy_keys.index(selected_policy)
+            
             # Fetch policy data and chunk it
-            selected_policy_url = policies[policies_keywords.keys().index(selected_policy)]
+            selected_policy_url = policies[selected_policy_index]
             policy_text = fetch_policy_data(selected_policy_url)
             chunks = chunk_text(policy_text)
 
@@ -145,3 +152,5 @@ def streamlit_app():
 # Run Streamlit app
 if __name__ == '__main__':
     streamlit_app()
+
+          
