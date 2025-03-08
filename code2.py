@@ -7,7 +7,7 @@ from mistralai import Mistral
 import faiss
 
 # Set up your Mistral API key
-api_key = os.getenv("MISTRAL_API_KEY")  # Fetch from environment
+api_key = os.getenv("ajZS5VlpB8GFUXsx4Ugw2C7CdkR4wbmK")  # Fetch from environment
 if not api_key:
     st.error("MISTRAL_API_KEY is not set! Please provide a valid API key.")
     st.stop()
