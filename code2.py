@@ -40,48 +40,46 @@ policy_urls = {
     "joint-appointment-policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/joint-appointment-policy"
 }
 
-# Intent classifier (simple text classifier)
+# Intent classifier (simple text classifier) trained once
+vectorizer = TfidfVectorizer(stop_words='english')
+le = LabelEncoder()
+
+# Sample training data (can be expanded)
+train_texts = [
+    "What is the leave policy?",
+    "How does the academic appraisal process work?",
+    "What is the procedure for academic credentials?",
+    "What does academic freedom entail?",
+    "How do they retain academic staff?",
+    "What are the qualifications needed for academic positions?",
+    "How do credit hours work?",
+    "What is the intellectual property policy?",
+    "Explain the joint appointment policy."
+]
+train_labels = [
+    "academic-annual-leave-policy",
+    "academic-appraisal-policy",
+    "academic-appraisal-procedure",
+    "academic-credentials-policy",
+    "academic-freedom-policy",
+    "academic-members-retention-policy",
+    "academic-qualifications-policy",
+    "credit-hour-policy",
+    "intellectual-property-policy",
+    "joint-appointment-policy"
+]
+
+# Vectorize training data
+X_train = vectorizer.fit_transform(train_texts)
+y_train = le.fit_transform(train_labels)
+
+# Train the classifier once
+classifier = MultinomialNB()
+classifier.fit(X_train, y_train)
+
+# Classify intent (which policy is related to the query)
 def classify_intent(query):
-    vectorizer = TfidfVectorizer(stop_words='english')
-    le = LabelEncoder()
-    
-    # Sample training data (can be expanded)
-    train_texts = [
-        "What is the leave policy?",
-        "How does the academic appraisal process work?",
-        "What is the procedure for academic credentials?",
-        "What does academic freedom entail?",
-        "How do they retain academic staff?",
-        "What are the qualifications needed for academic positions?",
-        "How do credit hours work?",
-        "What is the intellectual property policy?",
-        "Explain the joint appointment policy."
-    ]
-    train_labels = [
-        "academic-annual-leave-policy",
-        "academic-appraisal-policy",
-        "academic-appraisal-procedure",
-        "academic-credentials-policy",
-        "academic-freedom-policy",
-        "academic-members-retention-policy",
-        "academic-qualifications-policy",
-        "credit-hour-policy",
-        "intellectual-property-policy",
-        "joint-appointment-policy"
-    ]
-    
-    # Vectorize training data
-    X_train = vectorizer.fit_transform(train_texts)
-    y_train = le.fit_transform(train_labels)
-
-    # Vectorize the query
     X_query = vectorizer.transform([query])
-
-    # Train the classifier
-    classifier = MultinomialNB()
-    classifier.fit(X_train, y_train)
-
-    # Predict the label for the query
     predicted_label = classifier.predict(X_query)
     predicted_policy = le.inverse_transform(predicted_label)[0]
     return predicted_policy
