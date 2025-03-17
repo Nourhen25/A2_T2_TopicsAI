@@ -44,8 +44,16 @@ def chunk_text(text, chunk_size=512):
 # Get embeddings with caching and rate limit handling
 @st.cache_data
 def get_text_embedding(list_txt_chunks):
+    """Gets embeddings while handling API rate limits and errors."""
     client = Mistral(api_key=api_key)
-    return call_mistral_api_with_retry(client.embeddings.create, model="mistral-embed", inputs=list_txt_chunks).data
+    
+    response = call_mistral_api_with_retry(client.embeddings.create, model="mistral-embed", inputs=list_txt_chunks)
+    
+    if response is None or not hasattr(response, 'data'):  # Check for API failure
+        st.error("Failed to get embeddings from API. Please try again later.")
+        return []  # Return an empty list instead of breaking
+    
+    return [e.embedding for e in response.data]
 
 # Create FAISS index
 @st.cache_resource
