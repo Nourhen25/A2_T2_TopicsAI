@@ -11,7 +11,8 @@ import faiss
 api_key = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"
 os.environ["MISTRAL_API_KEY"] = api_key
 
-# Fetching and parsing policy data with error handling
+# Fetch and parse policy data
+@st.cache_data
 def fetch_policy_data(url):
     try:
         response = requests.get(url, timeout=10)
@@ -22,11 +23,12 @@ def fetch_policy_data(url):
     except requests.RequestException as e:
         return f"Error fetching policy data: {str(e)}"
 
-# Chunk text into manageable parts
+# Chunk text into smaller parts
 def chunk_text(text, chunk_size=512):
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
-# Get embeddings with retry mechanism
+# Get embeddings with retry logic
+@st.cache_data
 def get_text_embedding(list_txt_chunks, retries=3):
     for attempt in range(retries):
         try:
@@ -40,7 +42,8 @@ def get_text_embedding(list_txt_chunks, retries=3):
                 st.error(f"Error generating embeddings: {str(e)}")
                 return []
 
-# Create FAISS index safely
+# Create FAISS index
+@st.cache_resource
 def create_faiss_index(embeddings):
     if not embeddings:
         return None
@@ -55,7 +58,7 @@ def create_faiss_index(embeddings):
         st.error(f"Error creating FAISS index: {str(e)}")
         return None
 
-# Search relevant chunks in FAISS
+# Search for relevant chunks
 def search_relevant_chunks(faiss_index, query_embedding, k=2):
     if faiss_index is None:
         return []
@@ -67,7 +70,7 @@ def search_relevant_chunks(faiss_index, query_embedding, k=2):
         st.error(f"Error in FAISS search: {str(e)}")
         return []
 
-# Generate answer using Mistral AI
+# Generate AI-based answer
 def mistral_answer(query, context):
     if not context.strip():
         return "Sorry, I couldn't find relevant information in the selected policy."
@@ -109,30 +112,31 @@ def streamlit_app():
     selected_policy_name = st.selectbox("Select a Policy", list(policies.keys()))
     selected_policy_url = policies[selected_policy_name]
 
-    st.write(f"Fetching policy: {selected_policy_name}")
-    policy_text = fetch_policy_data(selected_policy_url)
-
-    if "Error" in policy_text:
-        st.error(policy_text)
-        return
-
-    chunks = chunk_text(policy_text)
-    embeddings = get_text_embedding(chunks)
-    faiss_index = create_faiss_index(embeddings)
-
-    query = st.text_input("Enter your Query:")
-
-    if query and faiss_index:
-        query_embedding = get_text_embedding([query])
-        if query_embedding:
-            relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
-            retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
-            context = " ".join(retrieved_chunks)
-            answer = mistral_answer(query, context)
+    # Prevent auto-execution by using a button
+    if st.button("Load Policy"):
+        st.session_state["policy_text"] = fetch_policy_data(selected_policy_url)
+        if "Error" in st.session_state["policy_text"]:
+            st.error(st.session_state["policy_text"])
         else:
-            answer = "Failed to process your query."
+            st.session_state["chunks"] = chunk_text(st.session_state["policy_text"])
+            st.session_state["embeddings"] = get_text_embedding(st.session_state["chunks"])
+            st.session_state["faiss_index"] = create_faiss_index(st.session_state["embeddings"])
+            st.success(f"Loaded {selected_policy_name} successfully!")
 
-        st.text_area("Answer:", answer, height=200)
+    # Show query input only if a policy is loaded
+    if "faiss_index" in st.session_state and st.session_state["faiss_index"]:
+        query = st.text_input("Enter your Query:")
+        if st.button("Get Answer"):
+            query_embedding = get_text_embedding([query])
+            if query_embedding:
+                relevant_indexes = search_relevant_chunks(st.session_state["faiss_index"], [query_embedding[0]], k=2)
+                retrieved_chunks = [st.session_state["chunks"][i] for i in relevant_indexes if i < len(st.session_state["chunks"])]
+                context = " ".join(retrieved_chunks)
+                answer = mistral_answer(query, context)
+            else:
+                answer = "Failed to process your query."
+
+            st.text_area("Answer:", answer, height=200)
 
 # Run Streamlit app
 if __name__ == "__main__":
