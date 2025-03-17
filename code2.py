@@ -12,18 +12,29 @@ from sklearn.metrics.pairwise import cosine_similarity
 api_key = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"
 os.environ["MISTRAL_API_KEY"] = api_key
 
-# Function to retry API calls with backoff
-def call_mistral_api_with_retry(api_function, *args, retries=3, delay=2):
-    for attempt in range(retries):
-        try:
-            return api_function(*args)
-        except Exception as e:
-            if "rate limit exceeded" in str(e).lower():
-                time.sleep(delay * (2 ** attempt))  # Exponential backoff
-            else:
-                st.error(f"API Error: {e}")
-                return None
-    return None
+# Policies and their descriptions for intent classification
+policies = {
+    "Academic Annual Leave Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
+        "description": "Rules about annual leave, vacation days, and time-off for academic staff."
+    },
+    "Academic Appraisal Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
+        "description": "Performance reviews, evaluations, and appraisals for faculty members."
+    },
+    "Academic Credentials Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
+        "description": "Regulations regarding academic qualifications, degrees, and credential recognition."
+    },
+    "Intellectual Property Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
+        "description": "Ownership of research, patents, and intellectual property rights."
+    },
+    "Credit Hour Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
+        "description": "How credit hours are assigned and calculated for courses."
+    }
+}
 
 # Fetch and parse policy data
 @st.cache_data
@@ -41,18 +52,20 @@ def fetch_policy_data(url):
 def chunk_text(text, chunk_size=512):
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
-# Get embeddings with caching and rate limit handling
+# Get embeddings with retry logic
 @st.cache_data
-def get_text_embedding(list_txt_chunks):
-    client = Mistral(api_key=api_key)
-
-    response = call_mistral_api_with_retry(client.embeddings.create, model="mistral-embed", inputs=list_txt_chunks)
-
-    if response is None or not hasattr(response, 'data'):
-        st.error("Error: Could not retrieve embeddings from Mistral API. Please try again later.")
-        return []
-
-    return [e.embedding for e in response.data]
+def get_text_embedding(list_txt_chunks, retries=3):
+    for attempt in range(retries):
+        try:
+            client = Mistral(api_key=api_key)
+            response = client.embeddings.create(model="mistral-embed", inputs=list_txt_chunks)
+            return [e.embedding for e in response.data]
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                st.error(f"Error generating embeddings: {str(e)}")
+                return []
 
 # Create FAISS index
 @st.cache_resource
@@ -82,108 +95,67 @@ def search_relevant_chunks(faiss_index, query_embedding, k=2):
         st.error(f"Error in FAISS search: {str(e)}")
         return []
 
-# Generate AI-based answer with retry logic
+# Generate AI-based answer
 def mistral_answer(query, context):
     if not context.strip():
         return "Sorry, I couldn't find relevant information in the selected policy."
-
-    prompt = f"""
-    Context information is below:
-    ---------------------
-    {context}
-    ---------------------
-    Given the context information only, answer the query:
-    Query: {query}
-    Answer:
-    """
-    client = Mistral(api_key=api_key)
-    messages = [{"role": "user", "content": prompt}]
-    response = call_mistral_api_with_retry(client.chat.complete, model="mistral-large-latest", messages=messages)
-
-    if response:
-        return response.choices[0].message.content.strip()
-    else:
-        return "Error generating response due to API rate limit."
+    
+    try:
+        prompt = f"""
+        Context information is below:
+        ---------------------
+        {context}
+        ---------------------
+        Given the context information only, answer the query:
+        Query: {query}
+        Answer:
+        """
+        client = Mistral(api_key=api_key)
+        messages = [{"role": "user", "content": prompt}]
+        chat_response = client.chat.complete(model="mistral-large-latest", messages=messages)
+        return chat_response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error generating response: {str(e)}"
 
 # Intent classification: Match question to relevant policy
 def classify_policy(query):
-    """Classifies the query and selects the most relevant policy."""
     policy_descriptions = [p["description"] for p in policies.values()]
-
-    query_embedding = get_text_embedding([query])
-    if not query_embedding:  
-        st.error("Error: Could not generate query embedding. Try again later.")
-        return None, None
-
+    query_embedding = get_text_embedding([query])[0]
     policy_embeddings = get_text_embedding(policy_descriptions)
-    if not policy_embeddings:
-        st.error("Error: Could not generate policy embeddings. Try again later.")
-        return None, None
 
-    similarities = cosine_similarity([query_embedding[0]], policy_embeddings)[0]
+    similarities = cosine_similarity([query_embedding], policy_embeddings)[0]
     best_match_index = np.argmax(similarities)
-
     best_policy = list(policies.keys())[best_match_index]
-    return best_policy, policies[best_policy]["url"]
 
-# Policies with short descriptions for classification
-policies = {
-    "Academic Annual Leave Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
-        "description": "Rules about annual leave, vacation days, and time-off for academic staff."
-    },
-    "Academic Appraisal Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
-        "description": "Performance reviews, evaluations, and appraisals for faculty members."
-    },
-    "Academic Credentials Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
-        "description": "Regulations regarding academic qualifications, degrees, and credential recognition."
-    },
-    "Intellectual Property Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
-        "description": "Ownership of research, patents, and intellectual property rights."
-    },
-    "Credit Hour Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
-        "description": "How credit hours are assigned and calculated for courses."
-    }
-}
+    return best_policy, policies[best_policy]["url"]
 
 # Streamlit UI
 def streamlit_app():
     st.title("Agentic RAG - UDST Policies Q&A")
 
     query = st.text_input("Enter your Query:")
-
+    
     if st.button("Find Answer"):
         if query:
+            # Classify intent
             selected_policy, selected_policy_url = classify_policy(query)
+            st.success(f"Automatically selected policy: **{selected_policy}**")
 
-            if not selected_policy:
-                st.error("Could not classify policy due to an API issue. Please retry later.")
-            else:
-                st.success(f"Automatically selected policy: **{selected_policy}**")
+            # Fetch and process policy
+            policy_text = fetch_policy_data(selected_policy_url)
+            chunks = chunk_text(policy_text)
+            embeddings = get_text_embedding(chunks)
+            faiss_index = create_faiss_index(embeddings)
 
-                policy_text = fetch_policy_data(selected_policy_url)
-                chunks = chunk_text(policy_text)
+            # Get query embedding and retrieve relevant context
+            query_embedding = get_text_embedding([query])
+            relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
+            retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
+            context = " ".join(retrieved_chunks)
 
-                embeddings = get_text_embedding(chunks)
-                if not embeddings:
-                    st.error("Could not generate embeddings for the selected policy. Try again later.")
-                else:
-                    faiss_index = create_faiss_index(embeddings)
-
-                    query_embedding = get_text_embedding([query])
-                    if not query_embedding:
-                        st.error("Failed to process query embedding.")
-                    else:
-                        relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
-                        retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
-                        context = " ".join(retrieved_chunks)
-
-                        answer = mistral_answer(query, context)
-                        st.text_area("Answer:", answer, height=200)
+            # Generate answer
+            answer = mistral_answer(query, context)
+            st.text_area("Answer:", answer, height=200)
 
 # Run Streamlit app
 if __name__ == "__main__":
