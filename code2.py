@@ -44,15 +44,14 @@ def chunk_text(text, chunk_size=512):
 # Get embeddings with caching and rate limit handling
 @st.cache_data
 def get_text_embedding(list_txt_chunks):
-    """Gets embeddings while handling API rate limits and errors."""
     client = Mistral(api_key=api_key)
-    
+
     response = call_mistral_api_with_retry(client.embeddings.create, model="mistral-embed", inputs=list_txt_chunks)
-    
-    if response is None or not hasattr(response, 'data'):  # Check for API failure
-        st.error("Failed to get embeddings from API. Please try again later.")
-        return []  # Return an empty list instead of breaking
-    
+
+    if response is None or not hasattr(response, 'data'):
+        st.error("Error: Could not retrieve embeddings from Mistral API. Please try again later.")
+        return []
+
     return [e.embedding for e in response.data]
 
 # Create FAISS index
@@ -87,7 +86,7 @@ def search_relevant_chunks(faiss_index, query_embedding, k=2):
 def mistral_answer(query, context):
     if not context.strip():
         return "Sorry, I couldn't find relevant information in the selected policy."
-    
+
     prompt = f"""
     Context information is below:
     ---------------------
@@ -100,7 +99,7 @@ def mistral_answer(query, context):
     client = Mistral(api_key=api_key)
     messages = [{"role": "user", "content": prompt}]
     response = call_mistral_api_with_retry(client.chat.complete, model="mistral-large-latest", messages=messages)
-    
+
     if response:
         return response.choices[0].message.content.strip()
     else:
@@ -108,14 +107,23 @@ def mistral_answer(query, context):
 
 # Intent classification: Match question to relevant policy
 def classify_policy(query):
+    """Classifies the query and selects the most relevant policy."""
     policy_descriptions = [p["description"] for p in policies.values()]
-    query_embedding = get_text_embedding([query])[0]
+
+    query_embedding = get_text_embedding([query])
+    if not query_embedding:  
+        st.error("Error: Could not generate query embedding. Try again later.")
+        return None, None
+
     policy_embeddings = get_text_embedding(policy_descriptions)
+    if not policy_embeddings:
+        st.error("Error: Could not generate policy embeddings. Try again later.")
+        return None, None
 
-    similarities = cosine_similarity([query_embedding], policy_embeddings)[0]
+    similarities = cosine_similarity([query_embedding[0]], policy_embeddings)[0]
     best_match_index = np.argmax(similarities)
-    best_policy = list(policies.keys())[best_match_index]
 
+    best_policy = list(policies.keys())[best_match_index]
     return best_policy, policies[best_policy]["url"]
 
 # Policies with short descriptions for classification
@@ -147,28 +155,35 @@ def streamlit_app():
     st.title("Agentic RAG - UDST Policies Q&A")
 
     query = st.text_input("Enter your Query:")
-    
+
     if st.button("Find Answer"):
         if query:
-            # Classify intent
             selected_policy, selected_policy_url = classify_policy(query)
-            st.success(f"Automatically selected policy: **{selected_policy}**")
 
-            # Fetch and process policy
-            policy_text = fetch_policy_data(selected_policy_url)
-            chunks = chunk_text(policy_text)
-            embeddings = get_text_embedding(chunks)
-            faiss_index = create_faiss_index(embeddings)
+            if not selected_policy:
+                st.error("Could not classify policy due to an API issue. Please retry later.")
+            else:
+                st.success(f"Automatically selected policy: **{selected_policy}**")
 
-            # Get query embedding and retrieve relevant context
-            query_embedding = get_text_embedding([query])
-            relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
-            retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
-            context = " ".join(retrieved_chunks)
+                policy_text = fetch_policy_data(selected_policy_url)
+                chunks = chunk_text(policy_text)
 
-            # Generate answer
-            answer = mistral_answer(query, context)
-            st.text_area("Answer:", answer, height=200)
+                embeddings = get_text_embedding(chunks)
+                if not embeddings:
+                    st.error("Could not generate embeddings for the selected policy. Try again later.")
+                else:
+                    faiss_index = create_faiss_index(embeddings)
+
+                    query_embedding = get_text_embedding([query])
+                    if not query_embedding:
+                        st.error("Failed to process query embedding.")
+                    else:
+                        relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
+                        retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
+                        context = " ".join(retrieved_chunks)
+
+                        answer = mistral_answer(query, context)
+                        st.text_area("Answer:", answer, height=200)
 
 # Run Streamlit app
 if __name__ == "__main__":
