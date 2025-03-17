@@ -12,29 +12,18 @@ from sklearn.metrics.pairwise import cosine_similarity
 api_key = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"
 os.environ["MISTRAL_API_KEY"] = api_key
 
-# Policies and their descriptions for intent classification
-policies = {
-    "Academic Annual Leave Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
-        "description": "Rules about annual leave, vacation days, and time-off for academic staff."
-    },
-    "Academic Appraisal Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
-        "description": "Performance reviews, evaluations, and appraisals for faculty members."
-    },
-    "Academic Credentials Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
-        "description": "Regulations regarding academic qualifications, degrees, and credential recognition."
-    },
-    "Intellectual Property Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
-        "description": "Ownership of research, patents, and intellectual property rights."
-    },
-    "Credit Hour Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
-        "description": "How credit hours are assigned and calculated for courses."
-    }
-}
+# Function to retry API calls with backoff
+def call_mistral_api_with_retry(api_function, *args, retries=3, delay=2):
+    for attempt in range(retries):
+        try:
+            return api_function(*args)
+        except Exception as e:
+            if "rate limit exceeded" in str(e).lower():
+                time.sleep(delay * (2 ** attempt))  # Exponential backoff
+            else:
+                st.error(f"API Error: {e}")
+                return None
+    return None
 
 # Fetch and parse policy data
 @st.cache_data
@@ -52,20 +41,11 @@ def fetch_policy_data(url):
 def chunk_text(text, chunk_size=512):
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
-# Get embeddings with retry logic
+# Get embeddings with caching and rate limit handling
 @st.cache_data
-def get_text_embedding(list_txt_chunks, retries=3):
-    for attempt in range(retries):
-        try:
-            client = Mistral(api_key=api_key)
-            response = client.embeddings.create(model="mistral-embed", inputs=list_txt_chunks)
-            return [e.embedding for e in response.data]
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-            else:
-                st.error(f"Error generating embeddings: {str(e)}")
-                return []
+def get_text_embedding(list_txt_chunks):
+    client = Mistral(api_key=api_key)
+    return call_mistral_api_with_retry(client.embeddings.create, model="mistral-embed", inputs=list_txt_chunks).data
 
 # Create FAISS index
 @st.cache_resource
@@ -95,27 +75,28 @@ def search_relevant_chunks(faiss_index, query_embedding, k=2):
         st.error(f"Error in FAISS search: {str(e)}")
         return []
 
-# Generate AI-based answer
+# Generate AI-based answer with retry logic
 def mistral_answer(query, context):
     if not context.strip():
         return "Sorry, I couldn't find relevant information in the selected policy."
     
-    try:
-        prompt = f"""
-        Context information is below:
-        ---------------------
-        {context}
-        ---------------------
-        Given the context information only, answer the query:
-        Query: {query}
-        Answer:
-        """
-        client = Mistral(api_key=api_key)
-        messages = [{"role": "user", "content": prompt}]
-        chat_response = client.chat.complete(model="mistral-large-latest", messages=messages)
-        return chat_response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Error generating response: {str(e)}"
+    prompt = f"""
+    Context information is below:
+    ---------------------
+    {context}
+    ---------------------
+    Given the context information only, answer the query:
+    Query: {query}
+    Answer:
+    """
+    client = Mistral(api_key=api_key)
+    messages = [{"role": "user", "content": prompt}]
+    response = call_mistral_api_with_retry(client.chat.complete, model="mistral-large-latest", messages=messages)
+    
+    if response:
+        return response.choices[0].message.content.strip()
+    else:
+        return "Error generating response due to API rate limit."
 
 # Intent classification: Match question to relevant policy
 def classify_policy(query):
@@ -128,6 +109,30 @@ def classify_policy(query):
     best_policy = list(policies.keys())[best_match_index]
 
     return best_policy, policies[best_policy]["url"]
+
+# Policies with short descriptions for classification
+policies = {
+    "Academic Annual Leave Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
+        "description": "Rules about annual leave, vacation days, and time-off for academic staff."
+    },
+    "Academic Appraisal Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
+        "description": "Performance reviews, evaluations, and appraisals for faculty members."
+    },
+    "Academic Credentials Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
+        "description": "Regulations regarding academic qualifications, degrees, and credential recognition."
+    },
+    "Intellectual Property Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
+        "description": "Ownership of research, patents, and intellectual property rights."
+    },
+    "Credit Hour Policy": {
+        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
+        "description": "How credit hours are assigned and calculated for courses."
+    }
+}
 
 # Streamlit UI
 def streamlit_app():
