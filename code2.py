@@ -125,8 +125,14 @@ def classify_policy(query):
 
     similarities = cosine_similarity([query_embedding], policy_embeddings)[0]
     best_match_index = np.argmax(similarities)
-    best_policy = list(policies.keys())[best_match_index]
+    best_similarity_score = similarities[best_match_index]
 
+    # Add a threshold to ensure the match is strong enough
+    similarity_threshold = 0.7  # Adjust this value as needed
+    if best_similarity_score < similarity_threshold:
+        return None, None  # No good match found
+
+    best_policy = list(policies.keys())[best_match_index]
     return best_policy, policies[best_policy]["url"]
 
 # Streamlit UI
@@ -139,23 +145,27 @@ def streamlit_app():
         if query:
             # Classify intent
             selected_policy, selected_policy_url = classify_policy(query)
-            st.success(f"Automatically selected policy: **{selected_policy}**")
 
-            # Fetch and process policy
-            policy_text = fetch_policy_data(selected_policy_url)
-            chunks = chunk_text(policy_text)
-            embeddings = get_text_embedding(chunks)
-            faiss_index = create_faiss_index(embeddings)
+            if selected_policy is None:
+                st.warning("No relevant policy found for your query. Please try rephrasing or ask a different question.")
+            else:
+                st.success(f"Automatically selected policy: **{selected_policy}**")
 
-            # Get query embedding and retrieve relevant context
-            query_embedding = get_text_embedding([query])
-            relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
-            retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
-            context = " ".join(retrieved_chunks)
+                # Fetch and process policy
+                policy_text = fetch_policy_data(selected_policy_url)
+                chunks = chunk_text(policy_text)
+                embeddings = get_text_embedding(chunks)
+                faiss_index = create_faiss_index(embeddings)
 
-            # Generate answer
-            answer = mistral_answer(query, context)
-            st.text_area("Answer:", answer, height=200)
+                # Get query embedding and retrieve relevant context
+                query_embedding = get_text_embedding([query])
+                relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
+                retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
+                context = " ".join(retrieved_chunks)
+
+                # Generate answer
+                answer = mistral_answer(query, context)
+                st.text_area("Answer:", answer, height=200)
 
 # Run Streamlit app
 if __name__ == "__main__":
