@@ -6,35 +6,10 @@ import numpy as np
 import time
 from mistralai import Mistral
 import faiss
-from sklearn.metrics.pairwise import cosine_similarity
 
 # Set up Mistral API Key
 api_key = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"
 os.environ["MISTRAL_API_KEY"] = api_key
-
-# Policies and their descriptions for intent classification
-policies = {
-    "Academic Annual Leave Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
-        "description": "Rules about annual leave, vacation days, and time-off for academic staff."
-    },
-    "Academic Appraisal Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
-        "description": "Performance reviews, evaluations, and appraisals for faculty members."
-    },
-    "Academic Credentials Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
-        "description": "Regulations regarding academic qualifications, degrees, and credential recognition."
-    },
-    "Intellectual Property Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
-        "description": "Ownership of research, patents, and intellectual property rights."
-    },
-    "Credit Hour Policy": {
-        "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
-        "description": "How credit hours are assigned and calculated for courses."
-    }
-}
 
 # Fetch and parse policy data
 @st.cache_data
@@ -117,44 +92,50 @@ def mistral_answer(query, context):
     except Exception as e:
         return f"Error generating response: {str(e)}"
 
-# Intent classification: Match question to relevant policy
-def classify_policy(query):
-    policy_descriptions = [p["description"] for p in policies.values()]
-    query_embedding = get_text_embedding([query])[0]
-    policy_embeddings = get_text_embedding(policy_descriptions)
-
-    similarities = cosine_similarity([query_embedding], policy_embeddings)[0]
-    best_match_index = np.argmax(similarities)
-    best_policy = list(policies.keys())[best_match_index]
-
-    return best_policy, policies[best_policy]["url"]
-
 # Streamlit UI
 def streamlit_app():
-    st.title("Agentic RAG - UDST Policies Q&A")
+    st.title("UDST Policies Q&A")
 
-    query = st.text_input("Enter your Query:")
-    
-    if st.button("Find Answer"):
-        if query:
-            # Classify intent
-            selected_policy, selected_policy_url = classify_policy(query)
-            st.success(f"Automatically selected policy: **{selected_policy}**")
+    policies = {
+        "Academic Annual Leave Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
+        "Academic Appraisal Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-policy",
+        "Academic Appraisal Procedure": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-appraisal-procedure",
+        "Academic Credentials Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-credentials-policy",
+        "Academic Freedom Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-freedom-policy",
+        "Academic Members' Retention Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-members%E2%80%99-retention-policy",
+        "Academic Qualifications Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-qualifications-policy",
+        "Credit Hour Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/credit-hour-policy",
+        "Intellectual Property Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/intellectual-property-policy",
+        "Joint Appointment Policy": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/joint-appointment-policy"
+    }
 
-            # Fetch and process policy
-            policy_text = fetch_policy_data(selected_policy_url)
-            chunks = chunk_text(policy_text)
-            embeddings = get_text_embedding(chunks)
-            faiss_index = create_faiss_index(embeddings)
+    selected_policy_name = st.selectbox("Select a Policy", list(policies.keys()))
+    selected_policy_url = policies[selected_policy_name]
 
-            # Get query embedding and retrieve relevant context
+    # Prevent auto-execution by using a button
+    if st.button("Load Policy"):
+        st.session_state["policy_text"] = fetch_policy_data(selected_policy_url)
+        if "Error" in st.session_state["policy_text"]:
+            st.error(st.session_state["policy_text"])
+        else:
+            st.session_state["chunks"] = chunk_text(st.session_state["policy_text"])
+            st.session_state["embeddings"] = get_text_embedding(st.session_state["chunks"])
+            st.session_state["faiss_index"] = create_faiss_index(st.session_state["embeddings"])
+            st.success(f"Loaded {selected_policy_name} successfully!")
+
+    # Show query input only if a policy is loaded
+    if "faiss_index" in st.session_state and st.session_state["faiss_index"]:
+        query = st.text_input("Enter your Query:")
+        if st.button("Get Answer"):
             query_embedding = get_text_embedding([query])
-            relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
-            retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
-            context = " ".join(retrieved_chunks)
+            if query_embedding:
+                relevant_indexes = search_relevant_chunks(st.session_state["faiss_index"], [query_embedding[0]], k=2)
+                retrieved_chunks = [st.session_state["chunks"][i] for i in relevant_indexes if i < len(st.session_state["chunks"])]
+                context = " ".join(retrieved_chunks)
+                answer = mistral_answer(query, context)
+            else:
+                answer = "Failed to process your query."
 
-            # Generate answer
-            answer = mistral_answer(query, context)
             st.text_area("Answer:", answer, height=200)
 
 # Run Streamlit app
