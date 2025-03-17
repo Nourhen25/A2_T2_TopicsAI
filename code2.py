@@ -4,15 +4,21 @@ import requests
 from bs4 import BeautifulSoup
 import numpy as np
 import time
-from mistralai import Mistral
 import faiss
 from sklearn.metrics.pairwise import cosine_similarity
+from mistralai import Mistral
+import nltk
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Set up Mistral API Key
-api_key = "liU22SqhcuY6W5ckIPxOzcm4yro1CJLX"
+# Download nltk tokenizer
+nltk.download("punkt")
+from nltk.tokenize import sent_tokenize
+
+# 🔹 Secure API Key Handling
+api_key = st.secrets["MISTRAL_API_KEY"]
 os.environ["MISTRAL_API_KEY"] = api_key
 
-# Policies and their descriptions for intent classification
+# 🔹 Policies Data
 policies = {
     "Academic Annual Leave Policy": {
         "url": "https://www.udst.edu.qa/about-udst/institutional-excellence-ie/policies-and-procedures/academic-annual-leave-policy",
@@ -36,7 +42,7 @@ policies = {
     }
 }
 
-# Fetch and parse policy data
+# 🔹 Fetch and parse policy data
 @st.cache_data
 def fetch_policy_data(url):
     try:
@@ -48,29 +54,36 @@ def fetch_policy_data(url):
     except requests.RequestException as e:
         return f"Error fetching policy data: {str(e)}"
 
-# Chunk text into smaller parts
+# 🔹 Smarter chunking using NLP
 def chunk_text(text, chunk_size=512):
-    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    sentences = sent_tokenize(text)
+    chunks, current_chunk = [], ""
 
-# Get embeddings with retry logic
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) <= chunk_size:
+            current_chunk += " " + sentence
+        else:
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
+# 🔹 Robust API call for text embeddings
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2))
 @st.cache_data
-def get_text_embedding(list_txt_chunks, retries=3):
-    for attempt in range(retries):
-        try:
-            client = Mistral(api_key=api_key)
-            response = client.embeddings.create(model="mistral-embed", inputs=list_txt_chunks)
-            return [e.embedding for e in response.data]
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-            else:
-                st.error(f"Error generating embeddings: {str(e)}")
-                return []
+def get_text_embedding(list_txt_chunks):
+    client = Mistral(api_key=api_key)
+    response = client.embeddings.create(model="mistral-embed", inputs=list_txt_chunks)
+    return [e.embedding for e in response.data]
 
-# Create FAISS index
+# 🔹 Create FAISS index safely
 @st.cache_resource
 def create_faiss_index(embeddings):
-    if not embeddings:
+    if not embeddings or len(embeddings) == 0:
+        st.error("No valid embeddings found. FAISS index not created.")
         return None
     try:
         embedding_vectors = np.array(embeddings).astype('float32')
@@ -83,7 +96,7 @@ def create_faiss_index(embeddings):
         st.error(f"Error creating FAISS index: {str(e)}")
         return None
 
-# Search for relevant chunks
+# 🔹 Retrieve relevant policy chunks
 def search_relevant_chunks(faiss_index, query_embedding, k=2):
     if faiss_index is None:
         return []
@@ -95,11 +108,11 @@ def search_relevant_chunks(faiss_index, query_embedding, k=2):
         st.error(f"Error in FAISS search: {str(e)}")
         return []
 
-# Generate AI-based answer
+# 🔹 AI-based response generation
 def mistral_answer(query, context):
     if not context.strip():
         return "Sorry, I couldn't find relevant information in the selected policy."
-    
+
     try:
         prompt = f"""
         Context information is below:
@@ -113,11 +126,15 @@ def mistral_answer(query, context):
         client = Mistral(api_key=api_key)
         messages = [{"role": "user", "content": prompt}]
         chat_response = client.chat.complete(model="mistral-large-latest", messages=messages)
-        return chat_response.choices[0].message.content.strip()
+
+        if chat_response and chat_response.choices and chat_response.choices[0].message:
+            return chat_response.choices[0].message.content.strip()
+        else:
+            return "Error: No valid response from Mistral API."
     except Exception as e:
         return f"Error generating response: {str(e)}"
 
-# Intent classification: Match question to relevant policy
+# 🔹 Intent classification to find the best policy
 def classify_policy(query):
     policy_descriptions = [p["description"] for p in policies.values()]
     query_embedding = get_text_embedding([query])[0]
@@ -129,33 +146,33 @@ def classify_policy(query):
 
     return best_policy, policies[best_policy]["url"]
 
-# Streamlit UI
+# 🔹 Streamlit UI
 def streamlit_app():
-    st.title("Agentic RAG - UDST Policies Q&A")
+    st.title("🔍 Agentic RAG - UDST Policies Q&A")
 
-    query = st.text_input("Enter your Query:")
-    
+    query = st.text_input("Enter your question about UDST policies:")
+
     if st.button("Find Answer"):
         if query:
-            # Classify intent
+            # Step 1: Classify intent and select the best policy
             selected_policy, selected_policy_url = classify_policy(query)
-            st.success(f"Automatically selected policy: **{selected_policy}**")
+            st.success(f"🔹 Automatically selected policy: **{selected_policy}**")
 
-            # Fetch and process policy
+            # Step 2: Fetch and process policy content
             policy_text = fetch_policy_data(selected_policy_url)
             chunks = chunk_text(policy_text)
             embeddings = get_text_embedding(chunks)
             faiss_index = create_faiss_index(embeddings)
 
-            # Get query embedding and retrieve relevant context
+            # Step 3: Get query embedding and retrieve relevant content
             query_embedding = get_text_embedding([query])
             relevant_indexes = search_relevant_chunks(faiss_index, [query_embedding[0]], k=2)
             retrieved_chunks = [chunks[i] for i in relevant_indexes if i < len(chunks)]
             context = " ".join(retrieved_chunks)
 
-            # Generate answer
+            # Step 4: Generate the AI answer
             answer = mistral_answer(query, context)
-            st.text_area("Answer:", answer, height=200)
+            st.text_area("💡 Answer:", answer, height=200)
 
 # Run Streamlit app
 if __name__ == "__main__":
